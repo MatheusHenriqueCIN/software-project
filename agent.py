@@ -1,73 +1,155 @@
-from utils.ssl.Navigation import Navigation
-from utils.ssl.base_agent import BaseAgent
+import time
 import math
+from utils.ssl.Navigation import Navigation, Point
+from utils.ssl.base_agent import BaseAgent
+
 
 class ExampleAgent(BaseAgent):
+    
     def __init__(self, id=0, yellow=False):
         super().__init__(id, yellow)
+        self.setup_parameters()
+        self.status_log = []  # Aqui tá a lista do painel de controle (Aprimorar isso porque ta infinito no terminal)
 
-    def decision(self):
-        if len(self.targets) == 0:
-            return
+    def setup_parameters(self):
+        # Configura os parâmetros dos jogadores
+        self.last_avoidance_time = time.time()
+        self.modo_evitar = False
 
-        obstacles = self.detect_obstacle_in_path()
+        # Parâmetros de movimento do jogador
+        self.parametros_movimento = {
+            'fator_desaceleracao': 1,  # Desacela o jogador, não sei pq não ta desacelerando
+            'distancia_obstaculo_perto': 0.7,  # Distancia que o cara já ve o obstaculo
+            'margem': 0.1  # Margem de segurança pra pegar o objetivo, 0.2 ele so nao pega por algum motivo wtgf
+        }
 
-        if obstacles:
-            closest_target = self.get_closest_target()
-            target_velocity, target_angle_velocity = self.avoid_obstacles_and_go_to_target(closest_target, obstacles)
+        # Parâmetro do objetivo e a faixa de distância do local do mesmo
+        self.parametros_evitar = {
+            'raio_distancia': (1, 0),
+        }
+
+        # Objetivos
+        self.targets = []  # Aqui é a lista de onde os objetivos vão
+        self.objetivo_atribuido = None  # Objetivo atual
+        self.objetivos_visitados = set()  # Local onde já foi pisado
+
+    def raio_visao(self, target, max_distance=3):
+        # Simula se tem obstáculos na linha reta até o local
+        dx = target.x - self.robot.x
+        dy = target.y - self.robot.y
+        distancia_objetivo = self.calculo_distancia(target)
+
+        if distancia_objetivo < max_distance:
+            return distancia_objetivo  # Diz se o obstáculo foi ou não conquistado
+        return float('inf')  # Não tem obstáculo no meio
+
+    def choose_target(self):
+        # Escolhe o objetivo mais próximo
+        if not self.targets:
+            return None, None
+
+        # Aqui vai dizer onde o objetivo vai, do mais perto ao mais longe
+        sorted_objetivos = sorted(self.targets, key=self.calculo_distancia)
+        objetivo_perto = sorted_objetivos[0]  # Qual é o objetivo mais próximo
+
+        # Limpeza e reorganização da lista de objetivos
+        self.targets.clear()
+        self.targets.extend(sorted_objetivos)
+
+        return objetivo_perto, self.calculo_distancia(objetivo_perto)
+
+    def calculo_distancia(self, target):
+        # Calcula a distância entre o agente e um objetivo
+        dx = target.x - self.robot.x
+        dy = target.y - self.robot.y
+        return math.sqrt(dx**2 + dy**2)
+
+    def move_towards_target(self, target, distance):
+        # Move o jogador até o objetivo
+        dx = target.x - self.robot.x
+        dy = target.y - self.robot.y
+        obstacle_distance = self.raio_visao(target)
+
+        if obstacle_distance < float('inf'):
+            self.modo_evitar = True
+            velocidade_objetivo, target_angle_velocity = self.evitar_obstaculo(target)
         else:
-            closest_target = self.get_closest_target()
-            target_velocity, target_angle_velocity = Navigation.goToPoint(self.robot, closest_target)
+            self.modo_evitar = False
+            self.parametros_movimento['fator_desaceleracao'] = 1  # Aqui mudo a velocidade, 1 é a normal, abaixando fica mais lento
+            velocidade_objetivo, target_angle_velocity = Navigation.goToPoint(self.robot, target)
 
-        self.set_vel(target_velocity)
+        # Ajuste da velocidade
+        velocidade_ajustada = Point(
+            velocidade_objetivo.x * self.parametros_movimento['fator_desaceleracao'],
+            velocidade_objetivo.y * self.parametros_movimento['fator_desaceleracao']
+        )
+        self.set_vel(velocidade_ajustada)
         self.set_angle_vel(target_angle_velocity)
 
+    def evitar_obstaculo(self, target):
+        # Desvia do obstáculo de forma tranquila (falta aprimorar isso, ta um desvio meio feio ainda)
+        dx = target.x - self.robot.x
+        dy = target.y - self.robot.y
+        distancia_objetivo = self.calculo_distancia(target)
+
+        # Cálculo da distância de desvio
+        distancia_evitar = max(0.1, min(1, distancia_objetivo / 2))
+        novo_objetivo_x = self.robot.x + distancia_evitar if dx >= 0 else self.robot.x - distancia_evitar
+        novo_objetivo_y = self.robot.y + distancia_evitar if dy >= 0 else self.robot.y - distancia_evitar
+
+        novo_objetivo = Point(novo_objetivo_x, novo_objetivo_y)
+        return Navigation.goToPoint(self.robot, novo_objetivo)
+
+    def objetivo(self):
+        # Atribui um objetivo para o jogador
+        objetivo_perto, distancia_perto = self.choose_target()
+
+        if objetivo_perto is None:
+            self.objetivo_atribuido = None
+            self.set_vel(Point(0, 0))
+            self.set_angle_vel(0)
+            return
+
+        if distancia_perto <= self.parametros_movimento['margem']:
+            self.objetivos_visitados.add(objetivo_perto)  # Aqui diz que foi visitado
+            self.targets.remove(objetivo_perto)  # Tira o objetivo que foi passado da lista de objetivos
+            self.objetivo_atribuido = None
+            self.set_vel(Point(0, 0))
+            self.set_angle_vel(0)
+        else:
+            self.objetivo_atribuido = objetivo_perto
+
+    def update_status(self):
+        # Atualiza o status do jogador no painel de controle
+        self.status_log.clear()
+        self.status_log.append(f"Jogador Camisa Nº: {self.id}")
+        self.status_log.append(f"Posição: ({self.robot.x:.2f}, {self.robot.y:.2f})")
+
+        if self.objetivo_atribuido:
+            self.status_log.append(f"Objetivo: ({self.objetivo_atribuido.x:.2f}, {self.objetivo_atribuido.y:.2f})")
+            self.status_log.append(f"Distância do objetivo: {self.calculo_distancia(self.objetivo_atribuido):.2f}")
+            self.status_log.append(f"Está desviando: {'Sim' if self.modo_evitar else 'Não'}")
+        else:
+            self.status_log.append("Sem objetivo atribuído.")
+
+    def display_status(self):
+        # Exibe o status atualizado do agente no terminal
+        print("\n".join(self.status_log))
+
+    def decision(self):
+        # Lógica principal de decisão do jogador
+        self.objetivo()  # Aqui é onde fica o cérebro de decisão do jogador, basicamente o prime dele
+
+        if self.objetivo_atribuido:
+            self.move_towards_target(self.objetivo_atribuido, self.calculo_distancia(self.objetivo_atribuido))
+        else:
+            self.set_vel(Point(0, 0))
+            self.set_angle_vel(0)
+
+        self.update_status()
+        self.display_status()
+
     def post_decision(self):
+        # Vê o que fazer com essa parte amanhã (perguntar no discord)
         pass
 
-    def detect_obstacle_in_path(self):
-        detection_range = 3.0
-        detection_angle = math.pi / 6
-
-        obstacles = []
-
-        for angle in [0, detection_angle, -detection_angle, detection_angle / 2, -detection_angle / 2]:
-            obstacle_x = self.robot.x + detection_range * math.cos(angle)
-            obstacle_y = self.robot.y + detection_range * math.sin(angle)
-
-            if self.is_obstacle_in_path(obstacle_x, obstacle_y):
-                obstacles.append((obstacle_x, obstacle_y))
-
-        return obstacles
-
-    def is_obstacle_in_path(self, x, y):
-        distance = math.sqrt((x - self.robot.x)**2 + (y - self.robot.y)**2)
-        return distance < 0.7
-
-    def avoid_obstacles_and_go_to_target(self, target, obstacles):
-        target_velocity, target_angle_velocity = Navigation.goToPoint(self.robot, target)
-
-        avoidance_angle = 0
-        adjusted_velocity = target_velocity
-
-        for obstacle in obstacles:
-            obstacle_x, obstacle_y = obstacle
-            angle_to_obstacle = math.atan2(obstacle_y - self.robot.y, obstacle_x - self.robot.x)
-
-            avoidance_angle += 20 if angle_to_obstacle < 0 else -20
-
-            adjusted_velocity *= 0.5
-
-        target_angle_velocity += avoidance_angle
-
-        return adjusted_velocity, target_angle_velocity
-
-    def get_closest_target(self):
-        closest_target = min(self.targets, key=lambda target: self.distance_to(self.robot, target))
-        return closest_target
-
-    def distance_to(self, robot, target):
-        robot_x, robot_y = robot.x, robot.y
-        target_x, target_y = target.x, target.y
-        distance = math.sqrt((target_x - robot_x)**2 + (target_y - robot_y)**2)
-        return distance
