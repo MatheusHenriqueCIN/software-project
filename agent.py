@@ -2,14 +2,14 @@ import time
 import math
 from utils.ssl.Navigation import Navigation, Point
 from utils.ssl.base_agent import BaseAgent
-
+import itertools
 
 class ExampleAgent(BaseAgent):
     
     def __init__(self, id=0, yellow=False):
         super().__init__(id, yellow)
         self.setup_parameters()
-        self.status_log = []  # Aqui tá a lista do painel de controle (Aprimorar isso porque ta infinito no terminal por algum motivo)
+        self.status_log = []  # Aqui tá a lista do painel de controle (Aprimorar isso porque ta infinito no terminal)
 
     def setup_parameters(self):
         # Configura os parâmetros dos jogadores
@@ -18,9 +18,9 @@ class ExampleAgent(BaseAgent):
 
         # Parâmetros de movimento do jogador
         self.parametros_movimento = {
-            'fator_desaceleracao': 1,  # Desacela o jogador, não sei pq não ta desacelerando como eu quero entao deixei em 1
+            'fator_desaceleracao': 1,  # Desacela o jogador, não sei pq não ta desacelerando
             'distancia_obstaculo_perto': 0.7,  # Distancia que o cara já ve o obstaculo
-            'margem': 0.1  # Margem de segurança pra pegar o objetivo, 0.2 ele so nao pega por algum motivo wtf
+            'margem': 0.1  # Margem de segurança pra pegar o objetivo, 0.2 ele so nao pega por algum motivo wtgf
         }
 
         # Parâmetro do objetivo e a faixa de distância do local do mesmo
@@ -29,9 +29,9 @@ class ExampleAgent(BaseAgent):
         }
 
         # Objetivos
-        self.targets = []  # Aqui é a lista de onde os objetivos vão pra os robo ir ate la
-        self.objetivo_atribuido = None  # Objetivo atual que o robo vai
-        self.objetivos_visitados = set()  # Local onde já foi pisado pelo robo
+        self.targets = []  # Aqui é a lista de onde os objetivos vão
+        self.objetivo_atribuido = None  # Objetivo atual
+        self.objetivos_visitados = set()  # Local onde já foi pisado
 
     def raio_visao(self, target, max_distance=3):
         # Simula se tem obstáculos na linha reta até o local
@@ -40,19 +40,26 @@ class ExampleAgent(BaseAgent):
         distancia_objetivo = self.calculo_distancia(target)
 
         if distancia_objetivo < max_distance:
-            return distancia_objetivo  # Diz se o obstáculo foi ou não conquistado pra mostrar
+            return distancia_objetivo  # Diz se o obstáculo foi ou não conquistado
         return float('inf')  # Não tem obstáculo no meio
-
+    
+    def tem_obstaculo_no_caminho(self, target):  # Aqui ele verifica se tem obstaculo no meio do caminho pra desviar
+        objetos = itertools.chain(self.opponents.values(), self.teammates.values())
+        for obstacle in objetos:
+            if self.calculo_distancia(obstacle) < self.calculo_distancia(target):
+                return True
+        return False
+    
     def choose_target(self):
         # Escolhe o objetivo mais próximo
         if not self.targets:
             return None, None
 
-        # Aqui vai dizer onde o objetivo vai, do mais perto ao mais longe nessa ordem
+        # Aqui vai dizer onde o objetivo vai, do mais perto ao mais longe
         sorted_objetivos = sorted(self.targets, key=self.calculo_distancia)
         objetivo_perto = sorted_objetivos[0]  # Qual é o objetivo mais próximo
 
-        # Limpeza e reorganização da lista de objetivos, ele vai ajeitar a lista de obj aqui
+        # Limpeza e reorganização da lista de objetivos
         self.targets.clear()
         self.targets.extend(sorted_objetivos)
 
@@ -65,10 +72,12 @@ class ExampleAgent(BaseAgent):
         return math.sqrt(dx**2 + dy**2)
 
     def move_towards_target(self, target, distance):
-        # Move o jogador até o objetivo, diferenciando as coordenadas
+        # Move o jogador até o objetivo
         dx = target.x - self.robot.x
         dy = target.y - self.robot.y
         obstacle_distance = self.raio_visao(target)
+        if self.tem_obstaculo_no_caminho(target):
+            self.modo_evitar = True
 
         if obstacle_distance < float('inf'):
             self.modo_evitar = True
@@ -120,7 +129,7 @@ class ExampleAgent(BaseAgent):
             self.objetivo_atribuido = objetivo_perto
 
     def update_status(self):
-        # Atualiza o status do jogador no painel de controle, aqui fica a estrutura do painel de controle
+        # Atualiza o status do jogador no painel de controle
         self.status_log.clear()
         self.status_log.append(f"Jogador Camisa Nº: {self.id}")
         self.status_log.append(f"Posição: ({self.robot.x:.2f}, {self.robot.y:.2f})")
@@ -133,10 +142,11 @@ class ExampleAgent(BaseAgent):
             self.status_log.append("Sem objetivo atribuído.")
 
     def display_status(self):
-        # Fica mostrando o status do agente no terminal
+        # Exibe o status atualizado do agente no terminal
         print("\n".join(self.status_log))
 
     def decision(self):
+        # Lógica principal de decisão do jogador
         self.objetivo()  # Aqui é onde fica o cérebro de decisão do jogador, basicamente o prime dele
 
         if self.objetivo_atribuido:
